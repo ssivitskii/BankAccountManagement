@@ -1,0 +1,79 @@
+@baseUrl = http://localhost:8080
+@token = paste-access-token
+@accountId = paste-account-id
+@destinationAccountId = paste-destination-account-id
+@nextCursor = paste-next-cursor
+@from = 2026-01-01T00:00:00Z
+@to = 2026-02-01T00:00:00Z
+
+POST {{baseUrl}}/api/auth/register
+Content-Type: application/json
+
+{
+  "username": "alice",
+  "password": "local-password"
+}
+
+###
+
+POST {{baseUrl}}/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "alice",
+  "password": "local-password"
+}
+
+###
+
+POST {{baseUrl}}/api/accounts
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "number": "PORTFOLIO-0001",
+  "initialBalance": 100.00
+}
+
+###
+
+POST {{baseUrl}}/api/accounts/{{accountId}}/withdraw
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "amount": 20.00
+}
+
+###
+
+POST {{baseUrl}}/api/transfers
+Authorization: Bearer {{token}}
+Idempotency-Key: local-transfer-001
+Content-Type: application/json
+
+{
+  "fromAccountId": "{{accountId}}",
+  "toAccountId": "{{destinationAccountId}}",
+  "amount": 25.00
+}
+
+###
+
+GET {{baseUrl}}/api/accounts/{{accountId}}/operations?limit=25
+Authorization: Bearer {{token}}
+
+###
+
+GET {{baseUrl}}/api/accounts/{{accountId}}/operations?limit=25&cursor={{nextCursor}}
+Authorization: Bearer {{token}}
+
+###
+
+GET {{baseUrl}}/api/accounts/{{accountId}}/statement?from={{from}}&to={{to}}
+Authorization: Bearer {{token}}
+
+###
+
+GET {{baseUrl}}/api/accounts/{{accountId}}/statement.csv?from={{from}}&to={{to}}
+Authorization: Bearer {{token}}

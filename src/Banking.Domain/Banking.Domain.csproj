@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Banking.Domain</RootNamespace>
+  </PropertyGroup>
+</Project>

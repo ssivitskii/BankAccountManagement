@@ -73,7 +73,6 @@ See Getting Started for a direct process, or use Docker Compose below.
 ## Docker Start
 
 ```bash
-cd BankAccountManagement
 cp .env.example .env
 # Replace every placeholder in .env; use a random JWT key of at least 32 bytes.
 docker compose up --build

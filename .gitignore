@@ -18,6 +18,11 @@ TestResults/
 *.snupkg
 coverage*
 
+node_modules/
+dist/
+.angular/
+out-tsc/
+
 .env
 .env.*
 !.env.example

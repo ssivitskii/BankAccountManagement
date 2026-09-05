@@ -2,6 +2,12 @@ namespace Banking.Application.Abstractions;
 
 public interface IBankingService
 {
+    Task<AccountPage> ListAccountPageAsync(
+        Actor actor,
+        int limit,
+        string? cursor,
+        CancellationToken cancellationToken);
+
     Task<AccountDetails> CreateAccountAsync(
         Actor actor,
         string number,

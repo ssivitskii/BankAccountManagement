@@ -5,3 +5,6 @@
 .idea
 .DS_Store
 artifacts
+**/node_modules
+**/dist
+**/.angular

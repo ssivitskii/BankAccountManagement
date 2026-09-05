@@ -9,6 +9,73 @@ namespace Banking.UnitTests;
 public sealed class BankingServiceTests
 {
     [Fact]
+    public async Task CustomerAccountListContainsOnlyOwnedAccounts()
+    {
+        var customer = new User("customer", UserRole.Customer);
+        var otherCustomer = new User("other-customer", UserRole.Customer);
+        var owned = new Account(customer.Id, "ACCOUNT-OWNED", new Money(25));
+        var foreign = new Account(otherCustomer.Id, "ACCOUNT-FOREIGN", new Money(50));
+        var service = CreateService(new FakeAccountRepository(foreign, owned), customer);
+
+        AccountPage page = await service.ListAccountPageAsync(
+            new Actor(customer.Id, UserRole.Customer),
+            100,
+            null,
+            CancellationToken.None);
+
+        AccountDetails account = Assert.Single(page.Items);
+        Assert.Equal(owned.Id, account.Id);
+    }
+
+    [Fact]
+    public async Task AdministratorAccountListContainsEveryAccountInNumberOrder()
+    {
+        var administrator = new User("administrator", UserRole.Admin);
+        var first = new Account(Guid.NewGuid(), "ACCOUNT-A", new Money(25));
+        var second = new Account(Guid.NewGuid(), "ACCOUNT-B", new Money(50));
+        var service = CreateService(new FakeAccountRepository(second, first), administrator);
+
+        AccountPage page = await service.ListAccountPageAsync(
+            new Actor(administrator.Id, UserRole.Admin),
+            100,
+            null,
+            CancellationToken.None);
+
+        Assert.Equal([first.Id, second.Id], page.Items.Select(account => account.Id));
+    }
+
+    [Fact]
+    public async Task AccountPagesUseStableNumberAndIdCursor()
+    {
+        var administrator = new User("administrator", UserRole.Admin);
+        var first = new Account(Guid.NewGuid(), "ACCOUNT-A", new Money(25));
+        var second = new Account(Guid.NewGuid(), "ACCOUNT-A", new Money(50));
+        var third = new Account(Guid.NewGuid(), "ACCOUNT-B", new Money(75));
+        var service = CreateService(
+            new FakeAccountRepository(third, first, second),
+            administrator);
+        Account[] expected = [.. new[] { first, second }
+            .OrderBy(account => account.Id)
+            .Append(third)];
+
+        AccountPage firstPage = await service.ListAccountPageAsync(
+            new Actor(administrator.Id, UserRole.Admin),
+            2,
+            null,
+            CancellationToken.None);
+        AccountPage secondPage = await service.ListAccountPageAsync(
+            new Actor(administrator.Id, UserRole.Admin),
+            2,
+            firstPage.NextCursor,
+            CancellationToken.None);
+
+        Assert.Equal(expected[..2].Select(account => account.Id), firstPage.Items.Select(account => account.Id));
+        Assert.NotNull(firstPage.NextCursor);
+        Assert.Equal(expected[2].Id, Assert.Single(secondPage.Items).Id);
+        Assert.Null(secondPage.NextCursor);
+    }
+
+    [Fact]
     public async Task MultipleOperationsRemainInHistory()
     {
         var user = new User("customer", UserRole.Customer);
@@ -78,6 +145,17 @@ public sealed class BankingServiceTests
         Assert.Equal(0, logger.Entries);
     }
 
+    private static BankingService CreateService(IAccountRepository accounts, User user)
+    {
+        return new BankingService(
+            accounts,
+            new FakeUserRepository(user),
+            new FakeOperationRepository(),
+            new FakeUnitOfWork(),
+            new FakeTransaction(),
+            NullLogger<BankingService>.Instance);
+    }
+
     private sealed class FakeAccountRepository : IAccountRepository
     {
         private readonly Dictionary<Guid, Account> _accounts;
@@ -85,6 +163,26 @@ public sealed class BankingServiceTests
         public FakeAccountRepository(params Account[] accounts)
         {
             _accounts = accounts.ToDictionary(account => account.Id);
+        }
+
+        public Task<IReadOnlyList<Account>> ListPageAsync(
+            Guid? ownerId,
+            int count,
+            string? afterNumber,
+            Guid? afterId,
+            CancellationToken cancellationToken)
+        {
+            IReadOnlyList<Account> result = _accounts.Values
+                .Where(account => ownerId is null || account.OwnerId == ownerId.Value)
+                .Where(account => afterNumber is null
+                    || string.CompareOrdinal(account.Number, afterNumber) > 0
+                    || (string.Equals(account.Number, afterNumber, StringComparison.Ordinal)
+                        && account.Id.CompareTo(afterId!.Value) > 0))
+                .OrderBy(account => account.Number, StringComparer.Ordinal)
+                .ThenBy(account => account.Id)
+                .Take(count)
+                .ToArray();
+            return Task.FromResult(result);
         }
 
         public Task<Account?> FindByIdAsync(Guid id, CancellationToken cancellationToken)

@@ -1,22 +1,23 @@
-# Bank Account Management API
+# Bank Account Management
 
-A production-oriented ASP.NET Core backend for authenticated bank-account management. Customers can manage only their own accounts, while administrators can provision users and operate across account ownership boundaries. PostgreSQL persistence, explicit transactions, row locking, and integration tests make the important money paths reproducible locally.
+A production-oriented ASP.NET Core backend and Angular client for authenticated bank-account management. Customers can manage only their own accounts, while administrators can provision users and operate across account ownership boundaries. PostgreSQL persistence, explicit transactions, row locking, and integration tests make the important money paths reproducible locally.
 
 ## Features
 
 - Customer registration and login with hashed passwords and signed JWT bearer tokens.
+- Responsive Angular dashboard with account creation, bounded account and ledger pagination, deposits, withdrawals, and transfers.
 - Admin and Customer roles with ownership authorization.
-- Account creation, details, balance, deposit, withdrawal, atomic transfer, and keyset-paginated ledger history.
+- Ownership-scoped, keyset-paginated account listing plus account creation, details, balance, deposit, withdrawal, atomic transfer, and keyset-paginated ledger history.
 - Transfer-scoped idempotency with request fingerprints, replay detection, and payload-conflict rejection.
 - Bounded account statements as JSON or invariant CSV with opening and closing balances.
 - PostgreSQL persistence through EF Core migrations and database constraints.
 - Atomic balance mutations with `SELECT ... FOR UPDATE` to prevent double spending.
-- RFC-compatible Problem Details, authentication rate limiting, request validation, audit-oriented structured logging, Swagger, and liveness/readiness checks.
+- RFC-compatible Problem Details, authentication rate limiting, request validation, audit-oriented structured logging, Development-only Swagger, and liveness/readiness checks.
 - Unit tests plus end-to-end HTTP tests against a Testcontainers PostgreSQL instance.
 
 ## Tech Stack
 
-C# · .NET 9 · ASP.NET Core Web API · Entity Framework Core 9 · PostgreSQL/Npgsql · JWT Bearer · Swagger/OpenAPI · xUnit · WebApplicationFactory · Testcontainers · Docker Compose
+C# · .NET 9 · ASP.NET Core Web API · Entity Framework Core 9 · PostgreSQL/Npgsql · JWT Bearer · Swagger/OpenAPI · Angular 22 · TypeScript · RxJS · Vitest · xUnit · WebApplicationFactory · Testcontainers · Docker Compose
 
 ## Architecture
 
@@ -24,6 +25,7 @@ C# · .NET 9 · ASP.NET Core Web API · Entity Framework Core 9 · PostgreSQL/Np
 - `Banking.Application` — async use cases, ownership checks, repository ports, authentication, and transaction boundary.
 - `Banking.Infrastructure` — EF Core repositories/configurations/migration, PostgreSQL transaction and JWT/password adapters.
 - `Banking.Api` — HTTP DTOs, controllers, authentication middleware, Problem Details, Swagger, and health endpoints.
+- `frontend` — standalone Angular application, typed API client, session auth, guarded routes, and responsive banking UI.
 
 Dependency direction points inward: the Domain references no EF Core or ASP.NET Core package, and HTTP responses are dedicated DTOs rather than domain entities.
 
@@ -39,6 +41,7 @@ BankAccountManagement/
 ├── tests/
 │   ├── Banking.UnitTests/
 │   └── Banking.IntegrationTests/
+├── frontend/
 ├── Dockerfile
 ├── docker-compose.yml
 └── .env.example
@@ -54,16 +57,32 @@ export Jwt__Issuer='BankAccountManagement'
 export Jwt__Audience='BankAccountManagement.Client'
 export Jwt__SigningKey="$(openssl rand -base64 32)"
 export ASPNETCORE_URLS='http://localhost:8080'
+export ASPNETCORE_ENVIRONMENT='Development'
 dotnet run --project src/Banking.Api
 ```
 
-The API applies committed EF Core migrations at startup. Swagger is available at `http://localhost:8080/swagger` when that port is selected.
+The API applies committed EF Core migrations at startup. With the explicit Development environment above, Swagger is available at `http://localhost:8080/swagger` when that port is selected; it is not exposed in Production.
+
+In a second terminal, start the Angular development server:
+
+```bash
+cd frontend
+npm install
+npm start
+```
+
+Open `http://localhost:4200`. The development server proxies `/api` and `/health` to `http://localhost:8080`, so the backend does not need a broad CORS policy. The access token and user metadata are kept in `sessionStorage` for the current browser tab and are cleared on sign-out, token expiry, or an API `401` response. If a transfer result is ambiguous, only its user ID, account IDs, amount, request fingerprint, and idempotency key (never the token or credentials) remain in user-scoped `localStorage` until the exact request is safely retried to a definitive outcome. That recovery metadata intentionally survives tab closure and sign-out so the same user can recover safely after signing in again; on a shared browser it is a privacy tradeoff, although another user cannot restore or submit it.
+
+Administrators also see a **Provision a user** panel. A successful customer or administrator provisioning request automatically copies the returned user ID into the account form's Owner ID field; customers never see or invoke this action.
 
 ## Build
 
 ```bash
 dotnet restore BankAccountManagement.slnx
 dotnet build BankAccountManagement.slnx -c Release --no-restore
+cd frontend
+npm install
+npm run build
 ```
 
 ## Run
@@ -78,7 +97,7 @@ cp .env.example .env
 docker compose up --build
 ```
 
-Open `http://localhost:8080/swagger`. If port 8080 is occupied, set another `API_PORT` in `.env` (for example, `API_PORT=18085`) and open Swagger on that port. Stop and remove containers with `docker compose down`; add `--volumes` only when you intentionally want to delete local database data.
+The Compose service runs with the ASP.NET Core Production environment, so Swagger is not exposed. Check `http://localhost:8080/health/live` (or the configured `API_PORT`) and use the API or Angular development client described above. Stop and remove containers with `docker compose down`; add `--volumes` only when you intentionally want to delete local database data.
 
 ## Configuration
 
@@ -109,6 +128,15 @@ curl -i http://localhost:8080/api/auth/login \
 Copy `accessToken` from the response and send it as `Authorization: Bearer TOKEN`.
 
 ### Account Operations
+
+List the first page of accounts visible to the current actor (owned accounts for a Customer, all accounts for an Admin):
+
+```bash
+curl -H 'Authorization: Bearer TOKEN' \
+  'http://localhost:8080/api/accounts?limit=20'
+```
+
+The response is `{ "items": [...], "nextCursor": "..." }`. Pass the opaque `nextCursor` back unchanged to load the next page; `limit` must be between 1 and 100.
 
 ```bash
 curl -i http://localhost:8080/api/accounts \
@@ -167,9 +195,11 @@ Docker must be available for integration tests because Testcontainers starts an 
 ```bash
 dotnet test tests/Banking.UnitTests -c Release
 dotnet test tests/Banking.IntegrationTests -c Release
+cd frontend
+npm test
 ```
 
-Integration coverage includes authentication semantics and rate limiting, ownership, account creation and duplicates, deposits, withdrawals, validation, insufficient funds, concurrent withdrawals, idempotent transfers with linked ledger entries, equal-timestamp keyset pagination, and JSON/CSV statements.
+Integration coverage includes authentication semantics and isolated rate limiting, ownership-scoped account pagination, money boundaries, account creation and duplicates, deposits, withdrawals, validation, insufficient funds, concurrent withdrawals, idempotent transfers with linked ledger entries, equal-timestamp ledger pagination, Development-only Swagger, and JSON/CSV statements. Frontend tests cover typed HTTP contracts, authentication navigation and errors, tab-scoped auth persistence, bearer/401 handling, API error extraction, account-page append/stale guards, durable transfer recovery, money boundaries, and admin-only provisioning.
 
 ## Design Decisions
 
@@ -178,9 +208,10 @@ Integration coverage includes authentication semantics and rate limiting, owners
 - A PostgreSQL row lock serializes concurrent balance changes. Account mutation and operation insertion share one EF transaction, so they commit or roll back together.
 - Transfers reserve the hashed `(actor, scope, idempotency key)` in the same transaction, lock both accounts in UUID order to avoid A↔B deadlocks, and insert one transfer with exactly one debit and one credit ledger entry.
 - Statements read account balance and later ledger rows in one repeatable-read snapshot, then reconstruct opening and closing balances from signed operations.
+- Money is limited to `$9,000,000,000,000.00`, keeping every cent value within JavaScript's exact integer range for browser/API round trips.
 - Expected domain/application failures map centrally to 400/401/403/404/409 Problem Details responses.
 - Built-in structured logging and two health endpoints provide useful local observability without adding a telemetry stack the project does not need.
 
 ## Limitations / Future Improvements
 
-The API intentionally uses short-lived access tokens without refresh tokens, transfer-only idempotency, and a single implicit currency. Account numbers are portfolio identifiers rather than validated IBANs. Production deployment would also require managed secret storage, TLS termination, signing-key rotation, distributed rate-limit storage, immutable audit retention, and an operational backup policy.
+The API intentionally uses short-lived access tokens without refresh tokens, transfer-only idempotency, bounded keyset pagination, and a single implicit currency. Account numbers are portfolio identifiers rather than validated IBANs. Authenticated account creation currently has no per-user quota or throttle; add both before an Internet-facing deployment. Production deployment would also require managed secret storage, TLS termination, signing-key rotation, distributed rate-limit storage, immutable audit retention, and an operational backup policy.

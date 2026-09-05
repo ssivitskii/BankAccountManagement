@@ -20,6 +20,21 @@ public sealed class AccountsController : ControllerBase
         _actors = actors;
     }
 
+    [HttpGet]
+    [ProducesResponseType<AccountPageResponse>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<AccountPageResponse>> List(
+        CancellationToken cancellationToken,
+        [FromQuery] int limit = 20,
+        [FromQuery] string? cursor = null)
+    {
+        AccountPage page = await _banking.ListAccountPageAsync(
+            _actors.Get(User),
+            limit,
+            cursor,
+            cancellationToken);
+        return Ok(AccountPageResponse.FromApplication(page));
+    }
+
     [HttpPost]
     [ProducesResponseType<AccountResponse>(StatusCodes.Status201Created)]
     public async Task<ActionResult<AccountResponse>> Create(

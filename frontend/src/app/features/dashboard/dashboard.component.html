@@ -1,0 +1,413 @@
+<div class="dashboard-shell">
+  <header class="topbar">
+    <a class="brand" href="/dashboard" aria-label="Northstar Banking dashboard">
+      <span class="brand-mark" aria-hidden="true">N</span>
+      <span>Northstar</span>
+    </a>
+    <div class="profile-block">
+      <span class="avatar" aria-hidden="true">{{
+        session()?.username?.slice(0, 1)?.toUpperCase()
+      }}</span>
+      <span
+        ><strong>{{ session()?.username }}</strong
+        ><small>{{ isAdmin() ? 'Administrator' : 'Customer' }}</small></span
+      >
+      <button class="ghost compact" type="button" (click)="logout()">Sign out</button>
+    </div>
+  </header>
+
+  <main class="dashboard-content">
+    <section class="hero-row" aria-labelledby="dashboard-title">
+      <div>
+        <p class="eyebrow">Account overview</p>
+        <h1 id="dashboard-title">Good to see you, {{ session()?.username }}.</h1>
+        <p class="muted">Balances, ledger activity, and money movement in one place.</p>
+      </div>
+      <div class="total-card">
+        <span>{{ accountNextCursor() ? 'Loaded balance' : 'Total balance' }}</span>
+        <strong>{{ loadedBalance() }}</strong>
+        <small
+          >Across {{ accounts().length }}
+          {{
+            accountNextCursor()
+              ? accounts().length === 1
+                ? 'loaded account'
+                : 'loaded accounts'
+              : accounts().length === 1
+                ? 'account'
+                : 'accounts'
+          }}</small
+        >
+      </div>
+    </section>
+
+    @if (error()) {
+      <div class="notice error" role="alert">
+        <span>{{ error() }}</span>
+        <button type="button" aria-label="Dismiss error" (click)="error.set(null)">×</button>
+      </div>
+    }
+    @if (success()) {
+      <div class="notice success" role="status">
+        <span>{{ success() }}</span>
+        <button type="button" aria-label="Dismiss message" (click)="success.set(null)">×</button>
+      </div>
+    }
+
+    <section class="section-heading">
+      <div>
+        <p class="eyebrow">Portfolio</p>
+        <h2>Your accounts</h2>
+      </div>
+      <button
+        class="ghost"
+        type="button"
+        (click)="loadAccounts(true)"
+        [disabled]="loadingAccounts()"
+      >
+        {{ loadingAccounts() ? 'Refreshing…' : 'Refresh' }}
+      </button>
+    </section>
+
+    @if (loadingAccounts() && accounts().length === 0) {
+      <div class="account-grid" aria-label="Loading accounts">
+        <div class="account-card skeleton"></div>
+        <div class="account-card skeleton"></div>
+      </div>
+    } @else if (accounts().length === 0) {
+      <div class="empty-state">
+        <span class="empty-icon" aria-hidden="true">+</span>
+        <h3>No accounts yet</h3>
+        <p>Create your first account below to begin tracking activity.</p>
+      </div>
+    } @else {
+      <div class="account-grid">
+        @for (account of accounts(); track account.id) {
+          <button
+            type="button"
+            class="account-card"
+            [class.selected]="selectedAccountId() === account.id"
+            (click)="selectAccount(account.id)"
+            [attr.aria-pressed]="selectedAccountId() === account.id"
+          >
+            <span class="account-card-top"
+              ><small>Everyday account</small><span aria-hidden="true">•••</span></span
+            >
+            <strong>{{ account.number }}</strong>
+            <span class="account-balance">{{ formatMoney(account.balance) }}</span>
+            <span class="account-meta">Available balance</span>
+            @if (isAdmin()) {
+              <span class="owner-id">Owner {{ account.ownerId.slice(0, 8) }}…</span>
+            }
+          </button>
+        }
+      </div>
+      @if (accountNextCursor()) {
+        <button
+          class="ghost load-more"
+          type="button"
+          (click)="loadMoreAccounts()"
+          [disabled]="loadingMoreAccounts() || loadingAccounts()"
+        >
+          {{ loadingMoreAccounts() ? 'Loading…' : 'Load more accounts' }}
+        </button>
+      }
+    }
+
+    @if (isAdmin()) {
+      <section class="panel admin-provision" aria-labelledby="provision-title">
+        <div class="panel-heading">
+          <span class="panel-icon admin-icon" aria-hidden="true">◇</span>
+          <div>
+            <p class="eyebrow">Administration</p>
+            <h2 id="provision-title">Provision a user</h2>
+          </div>
+        </div>
+        <p class="muted admin-copy">
+          Create a customer or administrator, then use the returned owner ID to open their first
+          account.
+        </p>
+        @if (provisionError()) {
+          <p class="inline-notice error" role="alert">{{ provisionError() }}</p>
+        }
+        @if (provisionSuccess()) {
+          <p class="inline-notice success" role="status">{{ provisionSuccess() }}</p>
+        }
+        <form class="provision-form" [formGroup]="provisionForm" (ngSubmit)="provisionUser()">
+          <div>
+            <label for="provision-username">Username</label>
+            <input
+              id="provision-username"
+              formControlName="username"
+              autocomplete="off"
+              placeholder="3–100 characters"
+            />
+            @if (
+              provisionForm.controls.username.invalid && provisionForm.controls.username.touched
+            ) {
+              <small class="field-error">Use between 3 and 100 characters.</small>
+            }
+          </div>
+          <div>
+            <label for="provision-password">Temporary password</label>
+            <input
+              id="provision-password"
+              type="password"
+              formControlName="password"
+              autocomplete="new-password"
+              placeholder="At least 8 characters"
+            />
+            @if (
+              provisionForm.controls.password.invalid && provisionForm.controls.password.touched
+            ) {
+              <small class="field-error">Use between 8 and 200 characters.</small>
+            }
+          </div>
+          <div>
+            <label for="provision-role">Role</label>
+            <select id="provision-role" formControlName="role">
+              <option [ngValue]="userRoles.Customer">Customer</option>
+              <option [ngValue]="userRoles.Admin">Administrator</option>
+            </select>
+          </div>
+          <button class="primary" type="submit" [disabled]="provisioning()">
+            {{ provisioning() ? 'Provisioning…' : 'Provision user' }}
+          </button>
+        </form>
+      </section>
+    }
+
+    <section class="work-grid">
+      <article class="panel form-panel">
+        <div class="panel-heading">
+          <span class="panel-icon" aria-hidden="true">＋</span>
+          <div>
+            <p class="eyebrow">New</p>
+            <h2>Create account</h2>
+          </div>
+        </div>
+        <form [formGroup]="createForm" (ngSubmit)="createAccount()" novalidate>
+          <label for="account-number">Account number</label>
+          <input id="account-number" formControlName="number" placeholder="PORTFOLIO-0001" />
+          @if (createForm.controls.number.invalid && createForm.controls.number.touched) {
+            <small class="field-error">Use 4–34 letters, numbers, or hyphens.</small>
+          }
+          <label for="initial-balance">Initial balance</label>
+          <div class="money-input">
+            <span>$</span
+            ><input
+              id="initial-balance"
+              type="number"
+              min="0"
+              [max]="maximumMoneyAmount"
+              step="0.01"
+              formControlName="initialBalance"
+            />
+          </div>
+          @if (
+            createForm.controls.initialBalance.invalid && createForm.controls.initialBalance.touched
+          ) {
+            <small class="field-error"
+              >Enter zero or a positive amount up to $9,000,000,000,000.00 with no more than two
+              decimals.</small
+            >
+          }
+          @if (isAdmin()) {
+            <label for="owner-id">Owner ID</label>
+            <input
+              id="owner-id"
+              formControlName="ownerId"
+              placeholder="00000000-0000-0000-0000-000000000000"
+            />
+            <small class="hint">Required when an administrator creates an account.</small>
+          }
+          <button class="primary wide" type="submit" [disabled]="submitting()">
+            Create account
+          </button>
+        </form>
+      </article>
+
+      <article class="panel form-panel">
+        <div class="panel-heading">
+          <span class="panel-icon" aria-hidden="true">↕</span>
+          <div>
+            <p class="eyebrow">Balance</p>
+            <h2>Deposit or withdraw</h2>
+          </div>
+        </div>
+        @if (selectedAccount(); as account) {
+          <p class="context-line">
+            Selected <strong>{{ account.number }}</strong> · {{ formatMoney(account.balance) }}
+          </p>
+          <form [formGroup]="balanceForm" (ngSubmit)="submitBalanceChange()" novalidate>
+            <fieldset class="segmented">
+              <legend class="sr-only">Balance action</legend>
+              <label
+                ><input type="radio" formControlName="action" value="deposit" /><span
+                  >Deposit</span
+                ></label
+              >
+              <label
+                ><input type="radio" formControlName="action" value="withdraw" /><span
+                  >Withdraw</span
+                ></label
+              >
+            </fieldset>
+            <label for="balance-amount">Amount</label>
+            <div class="money-input">
+              <span>$</span
+              ><input
+                id="balance-amount"
+                type="number"
+                min="0.01"
+                [max]="maximumMoneyAmount"
+                step="0.01"
+                formControlName="amount"
+                placeholder="0.00"
+              />
+            </div>
+            @if (balanceForm.controls.amount.invalid && balanceForm.controls.amount.touched) {
+              <small class="field-error"
+                >Enter $0.01–$9,000,000,000,000.00 with no more than two decimals.</small
+              >
+            }
+            <button class="primary wide" type="submit" [disabled]="submitting()">
+              Confirm transaction
+            </button>
+          </form>
+        } @else {
+          <p class="empty-copy">Create or select an account to change its balance.</p>
+        }
+      </article>
+
+      <article class="panel form-panel transfer-panel">
+        <div class="panel-heading">
+          <span class="panel-icon" aria-hidden="true">→</span>
+          <div>
+            <p class="eyebrow">Move money</p>
+            <h2>Transfer</h2>
+          </div>
+        </div>
+        @if (accounts().length >= 1) {
+          <form [formGroup]="transferForm" (ngSubmit)="submitTransfer()" novalidate>
+            <div class="form-columns">
+              <div>
+                <label for="transfer-from">From</label
+                ><select id="transfer-from" formControlName="fromAccountId">
+                  @for (account of accounts(); track account.id) {
+                    <option [value]="account.id">
+                      {{ account.number }} · {{ formatMoney(account.balance) }}
+                    </option>
+                  }
+                </select>
+              </div>
+              <div>
+                <label for="transfer-to">Destination account ID</label>
+                <input
+                  id="transfer-to"
+                  type="text"
+                  formControlName="toAccountId"
+                  list="destination-accounts"
+                  placeholder="00000000-0000-0000-0000-000000000000"
+                  autocomplete="off"
+                  [attr.aria-invalid]="
+                    transferForm.controls.toAccountId.invalid &&
+                    transferForm.controls.toAccountId.touched
+                  "
+                />
+                <datalist id="destination-accounts">
+                  @for (account of accounts(); track account.id) {
+                    @if (account.id !== transferForm.controls.fromAccountId.value) {
+                      <option [value]="account.id">{{ account.number }}</option>
+                    }
+                  }
+                </datalist>
+                @if (
+                  transferForm.controls.toAccountId.invalid &&
+                  transferForm.controls.toAccountId.touched
+                ) {
+                  <small class="field-error">Enter a valid destination account UUID.</small>
+                }
+              </div>
+            </div>
+            <label for="transfer-amount">Amount</label>
+            <div class="money-input">
+              <span>$</span
+              ><input
+                id="transfer-amount"
+                type="number"
+                min="0.01"
+                [max]="maximumMoneyAmount"
+                step="0.01"
+                formControlName="amount"
+                placeholder="0.00"
+              />
+            </div>
+            @if (transferForm.controls.amount.invalid && transferForm.controls.amount.touched) {
+              <small class="field-error"
+                >Enter $0.01–$9,000,000,000,000.00 with no more than two decimals.</small
+              >
+            }
+            <button class="primary wide" type="submit" [disabled]="submitting()">
+              Send transfer
+            </button>
+          </form>
+        } @else {
+          <p class="empty-copy">Create a source account before making a transfer.</p>
+        }
+      </article>
+    </section>
+
+    <section class="panel activity-panel" aria-labelledby="activity-title">
+      <div class="section-heading inside">
+        <div>
+          <p class="eyebrow">Ledger</p>
+          <h2 id="activity-title">Recent activity</h2>
+        </div>
+        @if (selectedAccount(); as account) {
+          <span class="account-chip">{{ account.number }}</span>
+        }
+      </div>
+      @if (loadingOperations()) {
+        <p class="empty-copy">Loading account activity…</p>
+      } @else if (!selectedAccount()) {
+        <p class="empty-copy">Select an account to see its ledger.</p>
+      } @else if (operations().length === 0) {
+        <div class="empty-state compact-empty">
+          <h3>No activity yet</h3>
+          <p>Transactions will appear here as they happen.</p>
+        </div>
+      } @else {
+        <div class="activity-list">
+          @for (operation of operations(); track operation.id) {
+            <div class="activity-row">
+              <span
+                class="activity-icon"
+                [class.debit]="isDebit(operation.type)"
+                aria-hidden="true"
+                >{{ isDebit(operation.type) ? '↓' : '↑' }}</span
+              >
+              <span class="activity-copy"
+                ><strong>{{ operationLabel(operation.type) }}</strong
+                ><small>{{ formatDate(operation.occurredAt) }}</small></span
+              >
+              <strong class="activity-amount" [class.debit]="isDebit(operation.type)"
+                >{{ operationSign(operation.type) }}{{ formatMoney(operation.amount) }}</strong
+              >
+            </div>
+          }
+        </div>
+        @if (nextCursor()) {
+          <button
+            class="ghost load-more"
+            type="button"
+            (click)="loadOperations(false)"
+            [disabled]="loadingMore()"
+          >
+            {{ loadingMore() ? 'Loading…' : 'Load more activity' }}
+          </button>
+        }
+      }
+    </section>
+  </main>
+</div>

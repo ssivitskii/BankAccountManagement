@@ -8,6 +8,6 @@ public sealed class CreateTransferRequest
 
     public Guid ToAccountId { get; init; }
 
-    [Range(typeof(decimal), "0.01", "9999999999999999.99")]
+    [Range(typeof(decimal), "0.01", "9000000000000.00")]
     public decimal Amount { get; init; }
 }

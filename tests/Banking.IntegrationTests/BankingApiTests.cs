@@ -1,5 +1,6 @@
 using Banking.Domain;
 using Banking.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -89,6 +90,128 @@ public sealed class BankingApiTests : IClassFixture<BankingApiFactory>
         JsonElement[] operations = await GetOperationsAsync(client, accountId);
         Assert.Equal(2, operations.Length);
         Assert.Equal(2, operations.Select(item => item.GetProperty("id").GetGuid()).Distinct().Count());
+    }
+
+    [Fact]
+    public async Task AccountListAppliesCustomerOwnershipAndAdministratorVisibility()
+    {
+        using HttpClient firstCustomer = _factory.CreateClient();
+        (string firstToken, Guid firstUserId) = await RegisterAndGetAuthAsync(firstCustomer, Unique("list-first"));
+        Authorize(firstCustomer, firstToken);
+        Guid firstAccountId = await CreateAccountAsync(firstCustomer, Unique("LIST-A"), 10);
+
+        using HttpClient secondCustomer = _factory.CreateClient();
+        (string secondToken, Guid secondUserId) = await RegisterAndGetAuthAsync(secondCustomer, Unique("list-second"));
+        Authorize(secondCustomer, secondToken);
+        Guid secondAccountId = await CreateAccountAsync(secondCustomer, Unique("LIST-B"), 20);
+
+        JsonElement[] customerAccounts = await GetAccountsAsync(firstCustomer);
+        Assert.Contains(customerAccounts, account => account.GetProperty("id").GetGuid() == firstAccountId);
+        Assert.DoesNotContain(customerAccounts, account => account.GetProperty("id").GetGuid() == secondAccountId);
+        Assert.All(customerAccounts, account => Assert.Equal(firstUserId, account.GetProperty("ownerId").GetGuid()));
+
+        using HttpClient administrator = _factory.CreateClient();
+        string adminToken = await LoginAndGetTokenAsync(
+            administrator,
+            BankingApiFactory.AdminUsername,
+            BankingApiFactory.AdminPassword);
+        Authorize(administrator, adminToken);
+        JsonElement[] allAccounts = await GetAccountsAsync(administrator);
+        Assert.Contains(allAccounts, account => account.GetProperty("ownerId").GetGuid() == firstUserId);
+        Assert.Contains(allAccounts, account => account.GetProperty("ownerId").GetGuid() == secondUserId);
+        Assert.Contains(allAccounts, account => account.GetProperty("id").GetGuid() == secondAccountId);
+        Assert.Equal(
+            allAccounts.Select(account => account.GetProperty("number").GetString()),
+            allAccounts.Select(account => account.GetProperty("number").GetString()).Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public async Task AccountListUsesBoundedStablePages()
+    {
+        using HttpClient client = _factory.CreateClient();
+        string token = await RegisterAndGetTokenAsync(client, Unique("page-owner"));
+        Authorize(client, token);
+        Guid first = await CreateAccountAsync(client, Unique("PAGE-A"), 10);
+        Guid second = await CreateAccountAsync(client, Unique("PAGE-B"), 20);
+        Guid third = await CreateAccountAsync(client, Unique("PAGE-C"), 30);
+
+        JsonElement firstPage = await client.GetFromJsonAsync<JsonElement>("/api/accounts?limit=2");
+        JsonElement[] firstItems = firstPage.GetProperty("items").EnumerateArray()
+            .Select(account => account.Clone())
+            .ToArray();
+        string cursor = firstPage.GetProperty("nextCursor").GetString()
+            ?? throw new Xunit.Sdk.XunitException("Expected an account cursor.");
+        JsonElement secondPage = await client.GetFromJsonAsync<JsonElement>(
+            $"/api/accounts?limit=2&cursor={Uri.EscapeDataString(cursor)}");
+        JsonElement[] secondItems = secondPage.GetProperty("items").EnumerateArray()
+            .Select(account => account.Clone())
+            .ToArray();
+
+        Assert.Equal(2, firstItems.Length);
+        Assert.Single(secondItems);
+        Assert.Null(secondPage.GetProperty("nextCursor").GetString());
+        Guid[] ids = [.. firstItems.Concat(secondItems).Select(account => account.GetProperty("id").GetGuid())];
+        Assert.Equal(3, ids.Distinct().Count());
+        Assert.Contains(first, ids);
+        Assert.Contains(second, ids);
+        Assert.Contains(third, ids);
+
+        HttpResponseMessage invalidLimit = await client.GetAsync("/api/accounts?limit=101");
+        HttpResponseMessage zeroLimit = await client.GetAsync("/api/accounts?limit=0");
+        HttpResponseMessage invalidCursor = await client.GetAsync("/api/accounts?cursor=invalid");
+        Assert.Equal(HttpStatusCode.BadRequest, invalidLimit.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, zeroLimit.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, invalidCursor.StatusCode);
+    }
+
+    [Fact]
+    public async Task MoneyBoundaryIsValidatedAndOverflowingCreditRollsBack()
+    {
+        using HttpClient client = _factory.CreateClient();
+        string token = await RegisterAndGetTokenAsync(client, Unique("money-limit"));
+        Authorize(client, token);
+        Guid accountId = await CreateAccountAsync(
+            client,
+            Unique("MAX"),
+            Money.MaximumAmount);
+
+        HttpResponseMessage overflowingDeposit = await client.PostAsJsonAsync(
+            $"/api/accounts/{accountId}/deposit",
+            new { amount = 0.01m });
+        HttpResponseMessage oversizedDeposit = await client.PostAsJsonAsync(
+            $"/api/accounts/{accountId}/deposit",
+            new { amount = Money.MaximumAmount + 0.01m });
+        HttpResponseMessage oversizedAccount = await client.PostAsJsonAsync(
+            "/api/accounts",
+            new { number = Unique("TOO-LARGE"), initialBalance = Money.MaximumAmount + 0.01m });
+        HttpResponseMessage oversizedTransfer = await SendTransferAsync(
+            client,
+            accountId,
+            Guid.NewGuid(),
+            Money.MaximumAmount + 0.01m,
+            Unique("oversized-transfer"));
+
+        Assert.Equal(HttpStatusCode.BadRequest, overflowingDeposit.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, oversizedDeposit.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, oversizedAccount.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, oversizedTransfer.StatusCode);
+        Assert.Equal(Money.MaximumAmount, await GetBalanceAsync(client, accountId));
+        Assert.Empty(await GetOperationsAsync(client, accountId));
+    }
+
+    [Fact]
+    public async Task SwaggerIsNotAvailableInProduction()
+    {
+        using WebApplicationFactory<Program> productionFactory = _factory.WithWebHostBuilder(
+            builder => builder.UseEnvironment("Production"));
+        using HttpClient client = productionFactory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false,
+        });
+
+        HttpResponseMessage response = await client.GetAsync("/swagger/index.html");
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
     [Fact]
@@ -437,8 +560,13 @@ public sealed class BankingApiTests : IClassFixture<BankingApiFactory>
         using HttpClient strangerClient = _factory.CreateClient();
         string strangerToken = await RegisterAndGetTokenAsync(strangerClient, Unique("statement-stranger"));
         Authorize(strangerClient, strangerToken);
+        DateTimeOffset authorizationTo = DateTimeOffset.UtcNow.AddMinutes(-1);
+        DateTimeOffset authorizationFrom = authorizationTo.AddMinutes(-1);
+        string authorizationQuery =
+            $"from={Uri.EscapeDataString(authorizationFrom.ToString("O"))}" +
+            $"&to={Uri.EscapeDataString(authorizationTo.ToString("O"))}";
         HttpResponseMessage forbidden = await strangerClient.GetAsync(
-            $"/api/accounts/{accountId}/statement?{query}");
+            $"/api/accounts/{accountId}/statement?{authorizationQuery}");
         Assert.Equal(HttpStatusCode.Forbidden, forbidden.StatusCode);
     }
 
@@ -477,6 +605,39 @@ public sealed class BankingApiTests : IClassFixture<BankingApiFactory>
             new { username, password = "customer-password" });
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         return await ReadTokenAsync(response);
+    }
+
+    private static async Task<(string Token, Guid UserId)> RegisterAndGetAuthAsync(
+        HttpClient client,
+        string username)
+    {
+        HttpResponseMessage response = await client.PostAsJsonAsync(
+            "/api/auth/register",
+            new { username, password = "customer-password" });
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        JsonElement payload = await response.Content.ReadFromJsonAsync<JsonElement>();
+        return (
+            payload.GetProperty("accessToken").GetString()
+                ?? throw new Xunit.Sdk.XunitException("Access token is missing."),
+            payload.GetProperty("userId").GetGuid());
+    }
+
+    private static async Task<JsonElement[]> GetAccountsAsync(HttpClient client)
+    {
+        var accounts = new List<JsonElement>();
+        string? cursor = null;
+        do
+        {
+            string url = cursor is null
+                ? "/api/accounts?limit=100"
+                : $"/api/accounts?limit=100&cursor={Uri.EscapeDataString(cursor)}";
+            JsonElement payload = await client.GetFromJsonAsync<JsonElement>(url);
+            accounts.AddRange(payload.GetProperty("items").EnumerateArray().Select(account => account.Clone()));
+            cursor = payload.GetProperty("nextCursor").GetString();
+        }
+        while (cursor is not null);
+
+        return [.. accounts];
     }
 
     private static async Task<decimal> GetBalanceAsync(HttpClient client, Guid accountId)

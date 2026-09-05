@@ -28,8 +28,12 @@ public static class ApiConfiguration
     public static WebApplication UseBankingApi(this WebApplication app)
     {
         app.UseExceptionHandler();
-        app.UseSwagger();
-        app.UseSwaggerUI();
+        if (app.Environment.IsDevelopment())
+        {
+            app.UseSwagger();
+            app.UseSwaggerUI();
+        }
+
         app.UseRouting();
         AuthenticationApiConfiguration.Use(app);
         app.MapControllers();

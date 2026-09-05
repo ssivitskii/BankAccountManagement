@@ -4,6 +4,13 @@ namespace Banking.Application.Abstractions;
 
 public interface IAccountRepository
 {
+    Task<IReadOnlyList<Account>> ListPageAsync(
+        Guid? ownerId,
+        int count,
+        string? afterNumber,
+        Guid? afterId,
+        CancellationToken cancellationToken);
+
     Task<Account?> FindByIdAsync(Guid id, CancellationToken cancellationToken);
 
     Task<Account?> FindByIdForUpdateAsync(Guid id, CancellationToken cancellationToken);

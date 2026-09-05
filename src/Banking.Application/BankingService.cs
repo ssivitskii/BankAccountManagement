@@ -2,6 +2,7 @@ using Banking.Application.Abstractions;
 using Banking.Domain;
 using Microsoft.Extensions.Logging;
 using System.Globalization;
+using System.Text;
 
 namespace Banking.Application;
 
@@ -28,6 +29,28 @@ public sealed class BankingService : IBankingService
         _unitOfWork = unitOfWork;
         _transaction = transaction;
         _logger = logger;
+    }
+
+    public async Task<AccountPage> ListAccountPageAsync(
+        Actor actor,
+        int limit,
+        string? cursor,
+        CancellationToken cancellationToken)
+    {
+        if (limit is < 1 or > 100)
+            throw new ArgumentOutOfRangeException(nameof(limit), "Page limit must be between 1 and 100.");
+        Guid? ownerId = actor.Role == UserRole.Admin ? null : actor.UserId;
+        (string? number, Guid? id) = DecodeAccountCursor(cursor);
+        IReadOnlyList<Account> accounts = await _accounts.ListPageAsync(
+            ownerId,
+            limit + 1,
+            number,
+            id,
+            cancellationToken)
+            .ConfigureAwait(false);
+        Account[] items = accounts.Take(limit).ToArray();
+        string? nextCursor = accounts.Count > limit ? EncodeAccountCursor(items[^1]) : null;
+        return new AccountPage(items.Select(Map).ToArray(), nextCursor);
     }
 
     public async Task<AccountDetails> CreateAccountAsync(
@@ -116,6 +139,42 @@ public sealed class BankingService : IBankingService
     {
         if (actor.Role != UserRole.Admin && actor.UserId != account.OwnerId)
             throw new ForbiddenException("The account belongs to another customer.");
+    }
+
+    private static (string? Number, Guid? Id) DecodeAccountCursor(string? cursor)
+    {
+        if (cursor is null)
+            return (null, null);
+        if (cursor.Length is < 1 or > 128)
+            throw new ArgumentException("The account cursor is invalid.", nameof(cursor));
+
+        try
+        {
+            string padded = cursor.Replace('-', '+').Replace('_', '/');
+            padded = padded.PadRight((padded.Length + 3) / 4 * 4, '=');
+            string decoded = Encoding.UTF8.GetString(Convert.FromBase64String(padded));
+            string[] parts = decoded.Split('\u001f', StringSplitOptions.None);
+            if (parts.Length != 2
+                || parts[0].Length is < 4 or > 34
+                || parts[0].Any(character => !char.IsAsciiLetterOrDigit(character) && character != '-')
+                || !Guid.TryParseExact(parts[1], "N", out Guid id))
+            {
+                throw new FormatException();
+            }
+
+            return (parts[0], id);
+        }
+        catch (FormatException)
+        {
+            throw new ArgumentException("The account cursor is invalid.", nameof(cursor));
+        }
+    }
+
+    private static string EncodeAccountCursor(Account account)
+    {
+        string encoded = Convert.ToBase64String(
+            Encoding.UTF8.GetBytes($"{account.Number}\u001f{account.Id:N}"));
+        return encoded.TrimEnd('=').Replace('+', '-').Replace('/', '_');
     }
 
     private static (DateTimeOffset? Timestamp, Guid? Id) DecodeCursor(string? cursor)

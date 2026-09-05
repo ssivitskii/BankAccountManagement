@@ -1,0 +1,79 @@
+<main class="auth-shell">
+  <section class="auth-story" aria-labelledby="product-title">
+    <a class="brand" href="/" aria-label="Northstar Banking home">
+      <span class="brand-mark" aria-hidden="true">N</span>
+      <span>Northstar</span>
+    </a>
+    <div>
+      <p class="eyebrow">Banking clarity, engineered</p>
+      <h1 id="product-title">Your money,<br /><em>in clear view.</em></h1>
+      <p class="lede">
+        A focused interface for accounts, transfers, and every movement in your ledger.
+      </p>
+    </div>
+    <p class="secure-note"><span aria-hidden="true">●</span> Secured by short-lived JWT sessions</p>
+  </section>
+
+  <section class="auth-panel" aria-labelledby="auth-title">
+    <div class="auth-card">
+      <div class="mode-switch" aria-label="Authentication mode">
+        <button type="button" [class.active]="mode() === 'login'" (click)="setMode('login')">
+          Sign in
+        </button>
+        <button type="button" [class.active]="mode() === 'register'" (click)="setMode('register')">
+          Create account
+        </button>
+      </div>
+
+      <p class="eyebrow">{{ mode() === 'login' ? 'Welcome back' : 'Get started' }}</p>
+      <h2 id="auth-title">
+        {{ mode() === 'login' ? 'Access your accounts' : 'Create your profile' }}
+      </h2>
+      <p class="muted">
+        {{
+          mode() === 'login'
+            ? 'Enter your credentials to continue.'
+            : 'Your first account is only a moment away.'
+        }}
+      </p>
+
+      @if (error()) {
+        <div class="notice error" role="alert">{{ error() }}</div>
+      }
+
+      <form [formGroup]="form" (ngSubmit)="submit()" novalidate>
+        <label for="username">Username</label>
+        <input
+          id="username"
+          type="text"
+          formControlName="username"
+          autocomplete="username"
+          placeholder="3–100 characters"
+          [attr.aria-invalid]="form.controls.username.invalid && form.controls.username.touched"
+        />
+        @if (form.controls.username.invalid && form.controls.username.touched) {
+          <small class="field-error">Use between 3 and 100 characters.</small>
+        }
+
+        <label for="password">Password</label>
+        <input
+          id="password"
+          type="password"
+          formControlName="password"
+          [autocomplete]="mode() === 'login' ? 'current-password' : 'new-password'"
+          placeholder="At least 8 characters"
+          [attr.aria-invalid]="form.controls.password.invalid && form.controls.password.touched"
+        />
+        @if (form.controls.password.invalid && form.controls.password.touched) {
+          <small class="field-error">Use between 8 and 200 characters.</small>
+        }
+
+        <button class="primary wide" type="submit" [disabled]="loading()">
+          {{
+            loading() ? 'Please wait…' : mode() === 'login' ? 'Sign in securely' : 'Create profile'
+          }}
+        </button>
+      </form>
+    </div>
+  </section>
+</main>

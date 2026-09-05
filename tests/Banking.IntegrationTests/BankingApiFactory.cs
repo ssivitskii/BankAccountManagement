@@ -44,6 +44,7 @@ public sealed class BankingApiFactory : WebApplicationFactory<Program>, IAsyncLi
                 ["Jwt:LifetimeMinutes"] = "30",
                 ["BootstrapAdmin:Username"] = AdminUsername,
                 ["BootstrapAdmin:Password"] = AdminPassword,
+                ["AuthRateLimit:PermitLimit"] = "1000",
             };
             configuration.AddInMemoryCollection(settings);
         });
